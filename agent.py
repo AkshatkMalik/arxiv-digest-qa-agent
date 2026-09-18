@@ -6,12 +6,13 @@ Meets all assessment criteria:
 2. arXiv API Retrieval & Relevance Selection
 3. Direct PDF Download & Local Caching via urllib
 4. Semantic Text Chunking & ChromaDB Vector Indexing
-5. Structured Executive Briefing Generation with Token Diagnostics (Gemini 3.6 Flash)
+5. Structured Executive Briefing Generation with Token Diagnostics & 503 Retry (Gemini 3.6 Flash)
 6. Grounded Interactive QA Loop with Source Citations & Anti-Hallucination Guards
 """
 
 import os
 import re
+import time
 import urllib.request
 from typing import TypedDict, List, Dict, Any
 from dotenv import load_dotenv
@@ -176,7 +177,7 @@ def chunk_embed_node(state: AgentState) -> AgentState:
 
 
 def summarize_node(state: AgentState) -> AgentState:
-    """Step 6: Generate structured Executive Briefing using Gemini 3.6 Flash + Token Diagnostics."""
+    """Step 6: Generate structured Executive Briefing using Gemini 3.6 Flash + Token Diagnostics with 503 retry logic."""
     print("\n[Node 6/6] 📋 Synthesizing Executive Briefing...")
     if state.get("error"):
         return state
@@ -203,31 +204,39 @@ def summarize_node(state: AgentState) -> AgentState:
     {state['raw_text'][:15000]}
     """
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=briefing_prompt
-        )
-        
-        state["briefing"] = response.text
-        
-        print("\n" + "=" * 65)
-        print("📋 EXECUTIVE BRIEFING")
-        print("=" * 65)
-        print(response.text)
-        print("=" * 65)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.6-flash",
+                contents=briefing_prompt
+            )
+            
+            state["briefing"] = response.text
+            
+            print("\n" + "=" * 65)
+            print("📋 EXECUTIVE BRIEFING")
+            print("=" * 65)
+            print(response.text)
+            print("=" * 65)
 
-        if hasattr(response, 'usage_metadata') and response.usage_metadata:
-            print(f"\n📊 [Token Diagnostics - Briefing]")
-            print(f"   • Prompt Tokens: {response.usage_metadata.prompt_token_count}")
-            print(f"   • Response Tokens: {response.usage_metadata.candidates_token_count}")
-            print(f"   • Total Tokens Used: {response.usage_metadata.total_token_count}")
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                print(f"\n📊 [Token Diagnostics - Briefing]")
+                print(f"   • Prompt Tokens: {response.usage_metadata.prompt_token_count}")
+                print(f"   • Response Tokens: {response.usage_metadata.candidates_token_count}")
+                print(f"   • Total Tokens Used: {response.usage_metadata.total_token_count}")
 
-        return state
-    except Exception as e:
-        state["error"] = f"Briefing Generation Failed: {e}"
-        print(f"[-] {state['error']}")
-        return state
+            return state
+            
+        except Exception as e:
+            if "503" in str(e) and attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 3
+                print(f"[-] Model experiencing high demand (503). Retrying in {wait_time} seconds (Attempt {attempt + 1}/{max_retries})...")
+                time.sleep(wait_time)
+            else:
+                state["error"] = f"Briefing Generation Failed: {e}"
+                print(f"[-] {state['error']}")
+                return state
 
 
 # =====================================================================
