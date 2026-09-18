@@ -1,150 +1,79 @@
 """
-utils.py - Core Utilities for arXiv Agent
------------------------------------------
-Handles paper fetching, local PDF caching, PyMuPDF text parsing,
-semantic text chunking, and ChromaDB vector persistence.
+utils.py - Utility Layer for arXiv Agent
+----------------------------------------
+Handles safe PDF parsing via PyMuPDF, semantic text chunking, 
+and local ChromaDB vector database persistence.
 """
 
 import os
-import logging
 import fitz  # PyMuPDF
-import arxiv
 import chromadb
-from dotenv import load_dotenv
-from google import genai
-
-# Load environment variables
-load_dotenv()
-
-# Set up professional logging (Replaces messy print statements)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
-logger = logging.getLogger(__name__)
-
-# Initialize Google GenAI client securely
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-
-
-def fetch_arxiv_paper(query: str, max_results: int = 1) -> dict:
-    """
-    Searches arXiv by ID (e.g., '1706.03762') or topic string, 
-    caches the PDF locally, and returns paper metadata.
-    """
-    logger.info(f"Searching arXiv for query: '{query}'")
-    
-    try:
-        # Determine if query is an arXiv ID or a general topic search
-        if "." in query and query.replace(".", "").isdigit():
-            search = arxiv.Search(id_list=[query])
-        else:
-            search = arxiv.Search(
-                query=query,
-                max_results=max_results,
-                sort_by=arxiv.SortCriterion.Relevance
-            )
-
-        results = list(arxiv.Client().results(search))
-        if not results:
-            raise ValueError(f"No papers found matching query: '{query}'")
-
-        paper = results[0]
-        safe_id = paper.get_short_id().replace("/", "_")
-        pdf_filename = f"temp_{safe_id}.pdf"
-        
-        # Smart Caching: Skip download if the PDF already exists locally
-        if os.path.exists(pdf_filename):
-            logger.info(f"Found cached PDF locally: {pdf_filename}. Skipping download.")
-        else:
-            logger.info(f"Downloading PDF: '{paper.title}'...")
-            paper.download_pdf(filename=pdf_filename)
-
-        metadata = {
-            "title": paper.title,
-            "authors": [author.name for author in paper.authors],
-            "published": str(paper.published.date()),
-            "summary": paper.summary,
-            "pdf_url": paper.pdf_url,
-            "pdf_path": pdf_filename,
-            "entry_id": paper.entry_id
-        }
-        return metadata
-
-    except Exception as e:
-        logger.error(f"Failed to fetch paper from arXiv: {e}")
-        raise
 
 
 def parse_pdf_text(pdf_path: str) -> str:
-    """Extracts clean plain text from a PDF file using PyMuPDF (fitz)."""
-    logger.info(f"Extracting text from PDF: {pdf_path}")
-    if not os.path.exists(pdf_path):
-        raise FileNotFoundError(f"PDF file not found at path: {pdf_path}")
-        
-    doc = fitz.open(pdf_path)
-    full_text = ""
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        full_text += page.get_text()
-    doc.close()
+    """
+    Safely opens a local PDF file and extracts all text content page by page.
+    Uses a context manager to prevent 'document closed' errors.
+    """
+    print(f"[INFO] Extracting text from PDF: {pdf_path}")
+    extracted_text = ""
     
-    logger.info(f"Successfully extracted {len(full_text)} characters from {len(doc)} pages.")
-    return full_text
+    try:
+        # Using a context manager ensures the file handle stays active during iteration
+        with fitz.open(pdf_path) as doc:
+            for page_num in range(len(doc)):
+                page = doc[page_num]
+                text = page.get_text()
+                if text:
+                    extracted_text += f"\n--- Page {page_num + 1} ---\n" + text
+                    
+        if not extracted_text.strip():
+            raise ValueError("The extracted text from the PDF is empty.")
+            
+        return extracted_text
+    except Exception as e:
+        raise RuntimeError(f"PDF Parsing Failed: {e}")
 
 
 def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
     """
-    Splits long text into smart, overlapping chunks. 
-    Attempts to break at sentence or paragraph boundaries when possible.
+    Splits large raw text into overlapping semantic chunks for vector indexing.
     """
-    logger.info("Chunking text for vector embeddings...")
     chunks = []
     start = 0
     text_length = len(text)
-
+    
     while start < text_length:
-        end = min(start + chunk_size, text_length)
+        end = start + chunk_size
+        chunk = text[start:end]
+        chunks.append(chunk)
+        start += chunk_size - overlap  # Move forward with overlap window
         
-        # If we're not at the end of the text, try to find a natural boundary (period or newline)
-        if end < text_length:
-            next_boundary = max(text.rfind('. ', start, end), text.rfind('\n', start, end))
-            if next_boundary > start + (chunk_size // 2):
-                end = next_boundary + 1
-
-        chunks.append(text[start:end].strip())
-        start += (chunk_size - overlap)
-
-    logger.info(f"Generated {len(chunks)} text chunks.")
     return chunks
 
 
-def init_vector_db(chunks: list[str], collection_name: str = "arxiv_papers"):
-    """Initializes a local persistent ChromaDB instance and indexes paper chunks."""
-    logger.info("Initializing local ChromaDB vector store...")
+def init_vector_db(chunks: list[str], collection_name: str = "arxiv_agent_store"):
+    """
+    Initializes a persistent local ChromaDB client, clears old collections if any,
+    and indexes the new paper chunks for similarity search.
+    """
+    # Initialize local persistent client stored in './chroma_db' folder
+    db_client = chromadb.PersistentClient(path="./chroma_db")
     
-    # Persistent client saves database locally in './chroma_db'
-    chroma_client = chromadb.PersistentClient(path="./chroma_db")
-    
-    # Recreate collection to ensure clean state per run
+    # Re-create collection to ensure clean state per paper run
     try:
-        chroma_client.delete_collection(name=collection_name)
-        logger.info(f"Cleared existing collection: {collection_name}")
+        db_client.delete_collection(name=collection_name)
     except Exception:
         pass
-
-    collection = chroma_client.create_collection(name=collection_name)
-
-    # Assign sequential string IDs for each text chunk
-    ids = [str(i) for i in range(len(chunks))]
+        
+    collection = db_client.get_or_create_collection(name=collection_name)
     
-    # Add documents to ChromaDB
+    # Add chunks into ChromaDB with unique IDs
+    ids = [str(i) for i in range(len(chunks))]
     collection.add(
         documents=chunks,
         ids=ids
     )
     
-    logger.info(f"Successfully indexed {len(chunks)} chunks into ChromaDB collection '{collection_name}'.")
+    print(f"[+] Successfully indexed {len(chunks)} chunks into local ChromaDB vector store.")
     return collection
