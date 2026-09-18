@@ -9,23 +9,22 @@ An intelligent, stateful research assistant built with **LangGraph**, **Google G
 The agent is engineered as an explicit, stateful graph using **LangGraph** rather than a single linear script or monolithic prompt chain. State persists cleanly across all execution nodes.
 
 ### State Graph Flow
-
-[User Input]
-↓
+```text
+[User Input] 
+     ↓
 (1) Query Understanding Node  ---> (Parses Intent: ID Lookup vs. Topic Search)
-↓
+     ↓
 (2) arXiv Retrieval Node      ---> (Queries official arXiv Atom API)
-↓
+     ↓
 (3) Selection / Ranking Node  ---> (Ranks & selects top paper, downloads PDF)
-↓
+     ↓
 (4) Fetch & Parse Node        ---> (Extracts clean text using PyMuPDF)
-↓
+     ↓
 (5) Chunk & Embed Node        ---> (Semantic chunking & local ChromaDB indexing)
-↓
+     ↓
 (6) Summarize Node            ---> (Generates structured Executive Briefing via Gemini 3.6 Flash)
-↓
+     ↓
 [Interactive RAG QA Loop]     ---> (Grounded follow-up Q&A with source citations & refusals)
-
 
 ### Shared State Definition (`AgentState`)
 ```python
