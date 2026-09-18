@@ -6,7 +6,7 @@ Meets all assessment criteria:
 2. arXiv API Retrieval & Relevance Selection
 3. Direct PDF Download & Local Caching via urllib
 4. Semantic Text Chunking & ChromaDB Vector Indexing
-5. Structured Executive Briefing Generation with Token Diagnostics
+5. Structured Executive Briefing Generation with Token Diagnostics (Gemini 3.6 Flash)
 6. Grounded Interactive QA Loop with Source Citations & Anti-Hallucination Guards
 """
 
@@ -53,9 +53,7 @@ def query_understanding_node(state: AgentState) -> AgentState:
     print("\n[Node 1/6] 🧠 Analyzing query intent...")
     query = state["query"].strip()
     
-    # Check if input is an arXiv ID pattern (e.g., '1706.03762' or '2401.12345') or contains URL
     is_id = bool(re.search(r'\d{4}\.\d{4,5}', query)) or "arxiv.org" in query.lower()
-    
     state["intent"] = "id_lookup" if is_id else "topic_search"
     print(f"   • Detected Intent: {state['intent'].upper()} for query: '{query}'")
     return state
@@ -68,11 +66,9 @@ def retrieval_node(state: AgentState) -> AgentState:
     
     try:
         if state["intent"] == "id_lookup":
-            # Extract clean ID if URL was passed
             clean_id = query.split("/")[-1].replace("v1", "").replace("v2", "").replace(".pdf", "")
             search = arxiv.Search(id_list=[clean_id])
         else:
-            # Topic search (fetching top 3 candidates for selection)
             search = arxiv.Search(
                 query=query,
                 max_results=3,
@@ -85,10 +81,8 @@ def retrieval_node(state: AgentState) -> AgentState:
             print(f"[-] {state['error']}")
             return state
 
-        # Serialize results into clean dictionary metadata format
         papers_meta = []
         for paper in results:
-            # Normalize PDF link to ensure direct download URL format
             pdf_url = paper.pdf_url
             if "arxiv.org/pdf/" not in pdf_url:
                 pdf_url = paper.entry_id.replace("/abs/", "/pdf/") + ".pdf"
@@ -123,7 +117,6 @@ def selection_node(state: AgentState) -> AgentState:
     safe_id = chosen["short_id"].replace("/", "_").replace(".", "_")
     pdf_filename = f"temp_{safe_id}.pdf"
     
-    # Download PDF locally if not already cached
     if not os.path.exists(pdf_filename):
         print(f"   • Downloading PDF from: {chosen['pdf_url']}...")
         try:
@@ -173,7 +166,6 @@ def chunk_embed_node(state: AgentState) -> AgentState:
         chunks = chunk_text(state["raw_text"])
         state["chunks"] = chunks
         
-        # Initialize persistent local vector database
         collection = init_vector_db(chunks, collection_name="arxiv_agent_store")
         state["vector_collection"] = collection
         return state
@@ -184,7 +176,7 @@ def chunk_embed_node(state: AgentState) -> AgentState:
 
 
 def summarize_node(state: AgentState) -> AgentState:
-    """Step 6: Generate structured Executive Briefing using Gemini Flash + Token Diagnostics."""
+    """Step 6: Generate structured Executive Briefing using Gemini 3.6 Flash + Token Diagnostics."""
     print("\n[Node 6/6] 📋 Synthesizing Executive Briefing...")
     if state.get("error"):
         return state
@@ -213,20 +205,18 @@ def summarize_node(state: AgentState) -> AgentState:
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="gemini-3.6-flash",
             contents=briefing_prompt
         )
         
         state["briefing"] = response.text
         
-        # Display Briefing Output
         print("\n" + "=" * 65)
         print("📋 EXECUTIVE BRIEFING")
         print("=" * 65)
         print(response.text)
         print("=" * 65)
 
-        # Token Diagnostics
         if hasattr(response, 'usage_metadata') and response.usage_metadata:
             print(f"\n📊 [Token Diagnostics - Briefing]")
             print(f"   • Prompt Tokens: {response.usage_metadata.prompt_token_count}")
@@ -246,7 +236,6 @@ def summarize_node(state: AgentState) -> AgentState:
 def build_agent_graph():
     workflow = StateGraph(AgentState)
 
-    # Add nodes
     workflow.add_node("query_understanding", query_understanding_node)
     workflow.add_node("retrieval", retrieval_node)
     workflow.add_node("selection", selection_node)
@@ -254,7 +243,6 @@ def build_agent_graph():
     workflow.add_node("chunk_embed", chunk_embed_node)
     workflow.add_node("summarize", summarize_node)
 
-    # Define directional edges
     workflow.set_entry_point("query_understanding")
     workflow.add_edge("query_understanding", "retrieval")
     workflow.add_edge("retrieval", "selection")
@@ -313,7 +301,7 @@ def run_qa_loop(vector_collection):
 
         try:
             qa_response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.6-flash",
                 contents=qa_prompt
             )
 
