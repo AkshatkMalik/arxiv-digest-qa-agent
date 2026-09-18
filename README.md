@@ -26,19 +26,20 @@ The agent is engineered as an explicit, stateful graph using **LangGraph** rathe
      ↓
 [Interactive RAG QA Loop]     ---> (Grounded follow-up Q&A with source citations & refusals)
 
-### Shared State Definition (`AgentState`)
-```python
-class AgentState(TypedDict):
-    query: str                       # Raw user input (ID or topic)
-    intent: str                      # "id_lookup" or "topic_search"
-    papers: List[Dict[str, Any]]     # Candidate papers retrieved from arXiv
-    selected_paper: Dict[str, Any]   # Chosen paper metadata & local PDF path
-    raw_text: str                    # Full extracted text from PDF
-    chunks: List[str]                # Semantically chunked text segments
-    vector_collection: Any           # ChromaDB collection reference
-    briefing: str                    # Generated Markdown Executive Briefing
-    error: str                       # Error message for graceful failure handling
+from typing import TypedDict, List, Dict, Any, Optional
 
+class AgentState(TypedDict):
+    """Defines the state schema passed across all nodes in the LangGraph pipeline."""
+    query: str                       # Raw user input (arXiv ID or research topic)
+    intent: str                      # Classified intent: "id_lookup" or "topic_search"
+    papers: List[Dict[str, Any]]     # Candidate papers metadata retrieved from arXiv API
+    selected_paper: Dict[str, Any]   # Final chosen paper metadata & local PDF file path
+    raw_text: str                    # Full extracted text from the PDF via PyMuPDF
+    chunks: List[str]                # Semantically segmented text chunks
+    vector_collection: Optional[Any] # Active ChromaDB collection reference for RAG QA
+    briefing: str                    # Final generated Markdown Executive Briefing
+    error: Optional[str]             # Error message string for graceful fallback handling
+    execution_metadata: Dict[str, Any] # Optional: tracking runtime metrics, tokens, or timestamps
 
 🛠️ Tech Stack & Dependencies
 
