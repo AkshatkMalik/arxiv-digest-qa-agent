@@ -4,7 +4,7 @@ agent.py - Stateful LangGraph Orchestrator for arXiv Agent
 Meets all assessment criteria:
 1. Query Understanding & Intent Parsing (ID lookup vs Topic search)
 2. arXiv API Retrieval & Relevance Selection
-3. PyMuPDF Fetch & Parse with Local Caching
+3. Direct PDF Download & Local Caching via urllib
 4. Semantic Text Chunking & ChromaDB Vector Indexing
 5. Structured Executive Briefing Generation with Token Diagnostics
 6. Grounded Interactive QA Loop with Source Citations & Anti-Hallucination Guards
@@ -12,12 +12,13 @@ Meets all assessment criteria:
 
 import os
 import re
+import urllib.request
 from typing import TypedDict, List, Dict, Any
 from dotenv import load_dotenv
 from google import genai
 from langgraph.graph import StateGraph, END
 import arxiv
-from utils import fetch_arxiv_paper, parse_pdf_text, chunk_text, init_vector_db
+from utils import parse_pdf_text, chunk_text, init_vector_db
 
 # Load environment secrets
 load_dotenv()
@@ -68,7 +69,7 @@ def retrieval_node(state: AgentState) -> AgentState:
     try:
         if state["intent"] == "id_lookup":
             # Extract clean ID if URL was passed
-            clean_id = query.split("/")[-1].replace("v1", "").replace("v2", "")
+            clean_id = query.split("/")[-1].replace("v1", "").replace("v2", "").replace(".pdf", "")
             search = arxiv.Search(id_list=[clean_id])
         else:
             # Topic search (fetching top 3 candidates for selection)
@@ -87,15 +88,19 @@ def retrieval_node(state: AgentState) -> AgentState:
         # Serialize results into clean dictionary metadata format
         papers_meta = []
         for paper in results:
+            # Normalize PDF link to ensure direct download URL format
+            pdf_url = paper.pdf_url
+            if "arxiv.org/pdf/" not in pdf_url:
+                pdf_url = paper.entry_id.replace("/abs/", "/pdf/") + ".pdf"
+
             papers_meta.append({
                 "title": paper.title,
                 "authors": [a.name for a in paper.authors],
                 "published": str(paper.published.date()),
                 "summary": paper.summary,
-                "pdf_url": paper.pdf_url,
+                "pdf_url": pdf_url,
                 "entry_id": paper.entry_id,
-                # Store arxiv object reference for downloading
-                "_raw_paper": paper 
+                "short_id": paper.get_short_id() if hasattr(paper, 'get_short_id') else paper.entry_id.split("/")[-1]
             })
 
         state["papers"] = papers_meta
@@ -109,22 +114,28 @@ def retrieval_node(state: AgentState) -> AgentState:
 
 
 def selection_node(state: AgentState) -> AgentState:
-    """Step 3: Selection & Ranking (picks the most relevant paper)."""
+    """Step 3: Selection & Ranking (picks the most relevant paper and downloads PDF)."""
     print("\n[Node 3/6] 🎯 Selecting top-ranked paper...")
     if not state.get("papers"):
         return state
 
-    # Automatically select the top relevant paper (or first result)
     chosen = state["papers"][0]
-    paper_obj = chosen.pop("_raw_paper") # Remove raw object before passing metadata
-    
-    # Download PDF with local caching handled in utils
-    safe_id = paper_obj.get_short_id().replace("/", "_")
+    safe_id = chosen["short_id"].replace("/", "_").replace(".", "_")
     pdf_filename = f"temp_{safe_id}.pdf"
     
+    # Download PDF locally if not already cached
     if not os.path.exists(pdf_filename):
-        print(f"   • Downloading PDF: '{chosen['title']}'...")
-        paper_obj.download_pdf(filename=pdf_filename)
+        print(f"   • Downloading PDF from: {chosen['pdf_url']}...")
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0'}
+            req = urllib.request.Request(chosen['pdf_url'], headers=headers)
+            with urllib.request.urlopen(req) as response, open(pdf_filename, 'wb') as out_file:
+                out_file.write(response.read())
+            print(f"   • Download complete: {pdf_filename}")
+        except Exception as e:
+            state["error"] = f"Failed to download PDF from URL: {e}"
+            print(f"[-] {state['error']}")
+            return state
     else:
         print(f"   • Found cached PDF locally: {pdf_filename}. Skipping download.")
 
@@ -259,7 +270,6 @@ def build_agent_graph():
 # 4. INTERACTIVE QA LOOP (RAG with Grounding & Citations)
 # =====================================================================
 def run_qa_loop(vector_collection):
-    """Meets assessment requirement: Free-form QA with strict grounding and source traceability."""
     print("\n" + "=" * 65)
     print("💬 INTERACTIVE RAG QA MODE ENABLED")
     print("Ask any question about the paper. Type 'exit' or 'quit' to close.")
@@ -272,12 +282,10 @@ def run_qa_loop(vector_collection):
             print("[*] Exiting agent. Have a wonderful day!")
             break
         
-        # Robust input filtering
         if not user_question or len(user_question) < 3 or not any(c.isalnum() for c in user_question):
             print("[-] Warning: Invalid or meaningless input detected. Please ask a valid question.")
             continue
 
-        # Retrieve top 3 relevant chunks from ChromaDB
         search_results = vector_collection.query(
             query_texts=[user_question],
             n_results=3
@@ -291,7 +299,6 @@ def run_qa_loop(vector_collection):
         chunk_ids = search_results['ids'][0] if 'ids' in search_results else [str(i) for i in range(len(retrieved_chunks))]
         combined_context = "\n\n".join(retrieved_chunks)
 
-        # Grounded prompt engineering (Anti-hallucination guardrail)
         qa_prompt = f"""
         You are a grounded QA research assistant. Answer the user's question accurately using ONLY 
         the provided context from the research paper. If the answer cannot be found in the context, 
@@ -312,13 +319,11 @@ def run_qa_loop(vector_collection):
 
             print(f"\n🤖 Answer:\n{qa_response.text}")
 
-            # Explicit Source Citations (Audit Trail for Recruiters)
             print(f"\n📌 [Source Citations / Audit Trail]")
             for idx, chunk_id in enumerate(chunk_ids):
                 preview_snippet = retrieved_chunks[idx][:120].replace("\n", " ")
                 print(f"   • Chunk ID [{chunk_id}]: \"{preview_snippet}...\"")
 
-            # Token tracking
             if hasattr(qa_response, 'usage_metadata') and qa_response.usage_metadata:
                 print(f"📊 [Token Diagnostics] Total Tokens: {qa_response.usage_metadata.total_token_count}")
 
@@ -339,7 +344,6 @@ def main():
         print("[-] Error: Invalid query format. Please restart and provide a valid input.")
         return
 
-    # Initialize and run the LangGraph state machine
     graph = build_agent_graph()
     initial_state = {
         "query": query,
@@ -356,12 +360,10 @@ def main():
     print("\n[*] Executing LangGraph Workflow...")
     final_state = graph.invoke(initial_state)
 
-    # Check for graceful error recovery
     if final_state.get("error"):
         print(f"\n[-] Agent execution halted due to error: {final_state['error']}")
         return
 
-    # Launch Interactive QA Loop once briefing is complete
     if final_state.get("vector_collection"):
         run_qa_loop(final_state["vector_collection"])
 
