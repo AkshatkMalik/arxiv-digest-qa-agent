@@ -41,12 +41,12 @@ The pipeline passes a strongly typed dictionary (`TypedDict`) across all nodes:
 * **arXiv Client:** Official `arxiv` Python package (Atom feed API)
 * **Environment Management:** `python-dotenv`
 
----
+
 
 ## 🚀 Setup & Run Instructions
 
 1. Clone the Repository & Navigate to Directory
-```cmd
+
 git clone https://github.com/AkshatkMalik/arxiv-digest-qa-agent.git
 cd arxiv-digest-qa-agent
 
@@ -76,7 +76,7 @@ cd arxiv-digest-qa-agent
 * **User Question 2:** *"What optimizer and learning rate schedule did they use for the base model?"*
   * **Agent Answer:** They used the Adam optimizer with $\beta_1 = 0.9$, $\beta_2 = 0.98$, and $\epsilon = 10^{-9}$, along with a custom warmup learning rate schedule described in Section 5.3. *(Source Citation: Chunk [22])*
 
----
+
 
 ## 🛠️ Design Decisions, Tradeoffs & Known Limitations
 
