@@ -77,10 +77,19 @@ Example B: Natural Language Topic
 SearchInput: "recent work on KV-cache compression for LLMs"Output 
 Summary: Automatically queries arXiv, ranks candidates, selects the top paper, extracts 24k+ characters, indexes 31 chunks, and synthesizes a comprehensive briefing.
 
-📝 Design Decisions & Tradeoffs
-1. Why LangGraph over Linear Chains?Decision: We selected LangGraph to enforce explicit control flow and modular separation of concerns.Tradeoff: While slightly more verbose than standard chaining libraries, it provides robust state persistence, transparent debugging at every pipeline node, and graceful error containment if a single step fails.
-2. Local-First Storage (ChromaDB & PyMuPDF)Decision: Used ChromaDB for embedded vector storage and PyMuPDF for text extraction.
-Tradeoff: Avoids external cloud DB dependencies and hosting costs. Everything runs entirely offline on local hardware, making setup frictionless for evaluation.
-3. Error Resilience & Anti-Hallucination GuardsDecision: Implemented automatic exponential backoff retries (handling temporary 503 Service Unavailable cloud spikes) and strict system-prompt constraints during the QA loop.
-Tradeoff: If a query falls outside the vector store context, the agent explicitly refuses to answer rather than hallucinating facts.
-4. Known LimitationsTop-$k$ Retrieval Scope: The vector search retrieves the top $n=3$ chunks. While optimized for speed and token economy, complex multi-hop queries requiring synthesis across distant pages can occasionally miss context. Future iterations could integrate parent-document retrieval or hybrid search.
+🛠️ Design Decisions & Tradeoffs
+1. LangGraph vs. Linear Chains:
+   Decision: Built as a state machine with LangGraph.
+   Why: Provides explicit state control and graceful error containment if a node fails.
+   Tradeoff: Slightly more verbose code, but offers vastly superior debugging and reliability.
+2. Local-First Storage (ChromaDB & PyMuPDF)
+   Decision: Uses PyMuPDF for parsing and ChromaDB for local vector embeddings.
+   Why: Avoids external cloud DB costs and lets the agent run instantly out-of-the-box.
+   Tradeoff: Excellent for local execution, though scaling to multi-user cloud production would require a distributed database.
+3. Error Resilience & Guardrails
+   Decision: Added exponential backoff retries and strict anti-hallucination prompts.
+   Why: Handles temporary arXiv API outages (503 errors) smoothly and forces the agent to say "I don't know" rather than guessing.
+   Tradeoff: Strict refusal rules mean it won't speculate on out-of-scope queries, ensuring total factual accuracy.
+4. Known Limitations
+   Top-$k$ Scope: Retrieves the top $3$ chunks for speed and token efficiency.
+   Complex questions spanning distant pages can occasionally miss context, which could be solved with hybrid search in future versions.
