@@ -1,4 +1,5 @@
 Markdown
+> 🎥 **Watch the 4-Minute Demo Walkthrough:** [Click here to view the Loom video demo](https://www.loom.com/share/b8441f01458a46a3966c016e106e478f)
 # 🤖 Autonomous arXiv Paper Digest & QA Agent (LangGraph Edition)
 
 An intelligent, stateful research assistant built with LangGraph, Google Gemini Flash, ChromaDB, and PyMuPDF. This agent autonomously fetches academic papers from arXiv (via specific ID or natural-language topic search), parses and chunks PDFs, synthesizes rigorous Executive Briefings, and powers a grounded, citation-backed Interactive Q&A loop.
